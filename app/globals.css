@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+/* =============================================
+   IntelliMart - Global Styles
+   Developer: Asad
+   ============================================= */
+
+@layer components {
+    @keyframes marqueeScroll {
+        0% { transform: translateX(0%); }
+        100% { transform: translateX(-50%); }
+    }
+
+    @keyframes fadeInUp {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes shimmer {
+        0% { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
+    }
+
+    @keyframes pulse-ring {
+        0% { transform: scale(0.9); opacity: 1; }
+        100% { transform: scale(1.4); opacity: 0; }
+    }
+}
+
+@layer base {
+    button { cursor: pointer; }
+
+    /* ---- Light Mode (default) ---- */
+    :root {
+        --bg-primary: #ffffff;
+        --bg-secondary: #f8fafc;
+        --bg-card: #f5f5f5;
+        --text-primary: #1e293b;
+        --text-secondary: #64748b;
+        --text-muted: #94a3b8;
+        --border-color: #e2e8f0;
+        --nav-bg: #ffffff;
+        --footer-bg: #ffffff;
+        --input-bg: #f1f5f9;
+        --card-hover: #efefef;
+        --accent: #16a34a;
+        --accent-hover: #15803d;
+    }
+
+    /* ---- Dark Mode ---- */
+    .dark {
+        --bg-primary: #0f172a;
+        --bg-secondary: #1e293b;
+        --bg-card: #1e293b;
+        --text-primary: #f1f5f9;
+        --text-secondary: #94a3b8;
+        --text-muted: #64748b;
+        --border-color: #334155;
+        --nav-bg: #0f172a;
+        --footer-bg: #0f172a;
+        --input-bg: #1e293b;
+        --card-hover: #2d3748;
+        --accent: #22c55e;
+        --accent-hover: #16a34a;
+    }
+
+    body {
+        background-color: var(--bg-primary);
+        color: var(--text-primary);
+        transition: background-color 0.3s ease, color 0.3s ease;
+    }
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Dark mode utility overrides */
+.dark .bg-white { background-color: var(--bg-primary) !important; }
+.dark .bg-slate-50 { background-color: var(--bg-secondary) !important; }
+.dark .bg-\[#F5F5F5\] { background-color: var(--bg-card) !important; }
+.dark .bg-slate-100 { background-color: var(--bg-card) !important; }
+.dark .text-slate-800 { color: var(--text-primary) !important; }
+.dark .text-slate-700 { color: var(--text-primary) !important; }
+.dark .text-slate-600 { color: var(--text-secondary) !important; }
+.dark .text-slate-500 { color: var(--text-secondary) !important; }
+.dark .border-gray-300 { border-color: var(--border-color) !important; }
+.dark .border-slate-200 { border-color: var(--border-color) !important; }
+.dark .border-slate-500\/30 { border-color: rgba(100,116,139,0.2) !important; }
+.dark .bg-slate-50\/30 { background-color: rgba(30,41,59,0.6) !important; }
