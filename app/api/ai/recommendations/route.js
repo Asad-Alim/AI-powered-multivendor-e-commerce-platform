@@ -2,6 +2,7 @@
 // "You might also need" — complementary/cross-sell suggestions via Gemini.
 // (Same-category "More like this" now lives in /api/products/related — pure DB, no LLM.)
 // Auth guard prevents unauthenticated callers from burning API credits
+export const maxDuration = 30
 import { requireAuth } from '@/lib/middleware'
 import { prisma } from '@/lib/prisma'
 
@@ -66,20 +67,30 @@ Select up to 4 product IDs that would genuinely COMPLEMENT the current product �
 Respond ONLY with valid JSON in this exact format, no markdown:
 {"productIds": ["id1","id2","id3","id4"], "reasoning": "one short sentence explaining why these pair well"}`
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-        }),
-      }
-    )
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 8000)
+
+    let response
+    try {
+      response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+          }),
+          signal: controller.signal,
+        }
+      )
+    } finally {
+      clearTimeout(timeoutId)
+    }
 
     const aiData = await response.json()
+    console.log('GEMINI STATUS:', response.status, JSON.stringify(aiData))
     const text   = aiData.candidates?.[0]?.content?.parts?.[0]?.text || ''
-
+    
     const clean  = text.replace(/```json|```/g, '').trim()
     const parsed = JSON.parse(clean)
 

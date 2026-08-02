@@ -74,7 +74,7 @@ function YouMightAlsoNeed({ currentProduct }) {
         })
         const data = await res.json()
         if (data.success && data.data.productIds.length) {
-          const res2 = await fetch(`/api/products?limit=100`)
+          const res2 = await fetch(`/api/products?ids=${data.data.productIds.join(',')}`)
           const catalog = await res2.json()
           const all = catalog.success ? catalog.data.products : []
           const recProducts = data.data.productIds

@@ -53,6 +53,7 @@ export default function Navbar() {
     logout()
     setDropdownOpen(false)
     toast.success('Logged out successfully')
+    router.push('/')
   }
 
   return (
