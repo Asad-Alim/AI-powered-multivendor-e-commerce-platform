@@ -103,6 +103,7 @@ Respond ONLY with valid JSON in this exact format, no markdown:
     })
   } catch (err) {
     // Fallback on any error — broad "just exclude current product"
+    console.error('[AI Recommendations] Falling back to same-category:', err.name, err.message)
     const fallback = await sameCategoryFallback(currentProduct).catch(() => [])
     return Response.json({
       success: true,

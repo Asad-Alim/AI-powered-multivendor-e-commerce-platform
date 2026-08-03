@@ -12,19 +12,23 @@ const STEPS = [
 
 const TERMINAL_CANCELLED = { key: 'CANCELLED', label: 'Cancelled', icon: XCircle }
 const TERMINAL_RETURNED   = { key: 'RETURNED',  label: 'Returned',  icon: RefreshCw }
+const TERMINAL_PARTIAL_RETURNED = { key: 'PARTIALLY_RETURNED', label: 'Partially Returned', icon: RefreshCw }
 
 export default function OrderTimeline({ order }) {
   const status = order.status
   const history = order.statusHistory || []
 
   // Determine if cancelled/returned
-  const isCancelled = ['CANCELLED', 'REFUNDED'].includes(status)
+ const isCancelled = ['CANCELLED', 'REFUNDED'].includes(status)
   const isReturned  = ['RETURNED', 'RETURN_REQUESTED'].includes(status)
+  const isPartiallyReturned = status === 'PARTIALLY_RETURNED'
 
   const steps = isCancelled
     ? [...STEPS.slice(0, 2), TERMINAL_CANCELLED]
     : isReturned
     ? [...STEPS, TERMINAL_RETURNED]
+    : isPartiallyReturned
+    ? [...STEPS, TERMINAL_PARTIAL_RETURNED]
     : STEPS
 
   const currentIdx = steps.findIndex(s => s.key === status)
@@ -48,8 +52,7 @@ export default function OrderTimeline({ order }) {
           const done = i <= effectiveIdx
           const current = i === effectiveIdx
           const time = getStepTime(step.key)
-          const isCancelStep = step.key === 'CANCELLED' || step.key === 'RETURNED'
-
+          const isCancelStep = step.key === 'CANCELLED' || step.key === 'RETURNED' || step.key === 'PARTIALLY_RETURNED'const isCancelStep = step.key === 'CANCELLED' || step.key === 'RETURNED' || step.key === 'PARTIALLY_RETURNED'
           return (
             <div key={step.key} className='flex flex-col items-center gap-2 relative z-10' style={{ flex: 1 }}>
               <div className={`size-8 rounded-full flex items-center justify-center border-2 transition-all duration-300 ${
@@ -78,7 +81,7 @@ export default function OrderTimeline({ order }) {
       <div className='flex sm:hidden flex-col gap-0'>
         {steps.map((step, i) => {
           const done = i <= effectiveIdx
-          const isCancelStep = step.key === 'CANCELLED' || step.key === 'RETURNED'
+          const isCancelStep = step.key === 'CANCELLED' || step.key === 'RETURNED' || step.key === 'PARTIALLY_RETURNED'
           const time = getStepTime(step.key)
 
           return (

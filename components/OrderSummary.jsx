@@ -1,6 +1,6 @@
 'use client'
 import { Plus, Pen, X, MapPin } from 'lucide-react'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAddresses, useCart, useAuth } from '@/context/AppContext'
 import AddressModal from './AddressModal'
 import toast from 'react-hot-toast'
@@ -22,6 +22,10 @@ export default function OrderSummary({ totalPrice, items }) {
   const [coupon, setCoupon] = useState(null)
   const [loading, setLoading] = useState(false)
 
+  useEffect(() => {
+    if (selectedAddress || addresses.length === 0) return
+    setSelectedAddress(addresses.find(a => a.isDefault) || addresses[0])
+  }, [addresses])
   const discount = coupon ? (coupon.discount / 100) * totalPrice : 0
 
   // ── Per-vendor shipping preview (item 6) ──────────────────────────────

@@ -101,6 +101,8 @@ export async function POST(req, { params }) {
         where: { id: orderId },
         data: {
           status: finalOrderStatus,
+          total: { decrement: refundBatchTotal },
+          discount: { decrement: itemRefunds.reduce((s, i) => s + (i.discountShare || 0), 0) },
           paymentStatus: (isFinalBatch && order.paymentMethod === 'STRIPE') ? 'REFUNDED' : order.paymentStatus,
           returnResolvedAt: new Date(),
           returnDecisionNote: note?.trim() || null,

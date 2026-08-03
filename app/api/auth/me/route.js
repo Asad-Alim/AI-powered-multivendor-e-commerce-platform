@@ -2,7 +2,7 @@
 // PUT /api/auth/me — Update name / email / password
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/middleware'
-import { hashPassword, comparePassword } from '@/lib/auth'
+import { hashPassword, comparePassword, signToken } from '@/lib/auth'
 import { success, notFound, serverError, validationError, unauthorized } from '@/lib/apiResponse'
 import { validateEmail } from '@/lib/validate'
 
@@ -51,15 +51,33 @@ export async function PUT(req) {
             if (!valid) return unauthorized('Current password is incorrect')
             if (newPassword.length < 8) return validationError('New password must be at least 8 characters')
             updateData.passwordHash = await hashPassword(newPassword)
+            // Same revocation mechanism as reset-password: invalidate every
+            // other JWT already issued to this user (other tabs/devices).
+            updateData.tokenVersion = { increment: 1 }
         }
         if (Object.keys(updateData).length === 0) return validationError('No fields to update')
 
         const updated = await prisma.user.update({
             where: { id: payload.id },
             data: updateData,
-            select: { id: true, name: true, email: true, role: true, image: true }
+            select: { id: true, name: true, email: true, role: true, image: true, tokenVersion: true }
         })
-        return success({ user: updated })
+
+        const res = success({ user: updated })
+        if (newPassword) {
+            // Re-sign a fresh token for *this* tab so the user isn't logged
+            // out of the session they just used to change their password —
+            // only other tabs/devices get invalidated by the tokenVersion bump.
+            const token = signToken({ id: updated.id, email: updated.email, role: updated.role, tokenVersion: updated.tokenVersion })
+            res.cookies.set('auth_token', token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'lax',
+                path: '/',
+                maxAge: 60 * 60 * 2,
+            })
+        }
+        return res
     } catch (err) {
         return serverError(err.message)
     }

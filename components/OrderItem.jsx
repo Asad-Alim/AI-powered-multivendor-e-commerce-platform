@@ -144,6 +144,7 @@ export default function OrderItem({ order, onStatusChange }) {
         </td>
 
         <td className='max-md:hidden'>
+          <p className='text-[10px] uppercase tracking-wide mb-1' style={{ color: 'var(--text-muted)' }}>Order status</p>
           <div className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${statusClass}`}>
             <DotIcon size={10} className='scale-150' />
             {order.status?.replace(/_/g, ' ')}
@@ -172,8 +173,11 @@ export default function OrderItem({ order, onStatusChange }) {
         <td colSpan={4} className='pb-3' style={{ color: 'var(--text-secondary)' }}>
           <p>{order.address?.name}, {order.address?.street}, {order.address?.city}</p>
           <div className='flex items-center gap-3 mt-2 flex-wrap'>
-            <div className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${statusClass}`}>
-              {order.status?.replace(/_/g, ' ')}
+            <div className='flex flex-col gap-1'>
+              <p className='text-[10px] uppercase tracking-wide' style={{ color: 'var(--text-muted)' }}>Order status</p>
+              <div className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${statusClass}`}>
+                {order.status?.replace(/_/g, ' ')}
+              </div>
             </div>
           </div>
         </td>
