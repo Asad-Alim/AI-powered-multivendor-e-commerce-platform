@@ -78,6 +78,33 @@ export async function PUT(req) {
       data: { shippingFee: parsedFee, freeShippingThreshold: parsedThreshold },
     })
 
+    
+
     return success({ store: updated, message: 'Shipping settings updated' })
+  } catch (err) { return serverError(err.message) }
+}
+
+// PATCH /api/store — vendor hides or unhides their own store
+// Body: { storeId, isActive }
+export async function PATCH(req) {
+  try {
+    const { error: authError, user } = await requireAuth(req)
+    if (authError) return authError
+
+    const body = await req.json()
+    const { storeId, isActive } = body
+    if (typeof isActive !== 'boolean') return validationError({ isActive: 'isActive must be true or false' })
+
+    const store = await resolveOwnedStore(user.id, storeId, { id: true, status: true })
+    if (!store) return error('Store not found or not owned by you', 404)
+    if (store.status !== 'APPROVED') {
+      return error('Only an approved store can be shown or hidden', 400)
+    }
+
+    const updated = await prisma.store.update({ where: { id: store.id }, data: { isActive } })
+    return success({
+      store: updated,
+      message: isActive ? 'Store is now visible to customers' : 'Store is now hidden',
+    })
   } catch (err) { return serverError(err.message) }
 }

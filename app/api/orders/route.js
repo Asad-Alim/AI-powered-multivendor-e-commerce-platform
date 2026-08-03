@@ -66,7 +66,7 @@ export async function POST(req) {
     const productIds = items.map(i => i.productId)
     const products = await prisma.product.findMany({
       where: { id: { in: productIds }, isActive: true },
-      include: { store: { select: { id: true, isActive: true, commission: true, shippingFee: true, freeShippingThreshold: true } } }
+      include: { store: { select: { id: true, isActive: true, commission: true, shippingFee: true, freeShippingThreshold: true, userId: true } } }
     })
 
     if (products.length !== productIds.length) return error('One or more products not found or unavailable')
@@ -76,6 +76,7 @@ export async function POST(req) {
       if (!product.inStock) return error(`"${product.name}" is out of stock`)
       if (product.stockCount < item.quantity) return error(`Only ${product.stockCount} units of "${product.name}" available`)
       if (!product.store.isActive) return error(`Store for "${product.name}" is not active`)
+      if (product.store.userId === user.id) return error(`You can't purchase your own store's product: "${product.name}"`)
     }
 
     // ── Group by store (item 1) ─────────────────────────────────────────
@@ -95,6 +96,7 @@ export async function POST(req) {
 
     let couponData = null
     let cartDiscount = 0
+    let discountBase = 0
     if (couponCode) {
       couponData = await prisma.coupon.findFirst({ where: { code: couponCode.toUpperCase(), expiresAt: { gte: new Date() } } })
       if (!couponData) return error('Invalid or expired coupon code')
@@ -110,7 +112,7 @@ export async function POST(req) {
 
       // Category-restricted discount (item 4): compute against only the
       // matching-category subtotal, not the whole cart.
-      const discountBase = couponData.category
+      discountBase = couponData.category
         ? [...groups.values()].reduce((sum, g) =>
             sum + g.entries.filter(({ product }) => product.category === couponData.category)
                           .reduce((s, { item, product }) => s + product.price * item.quantity, 0), 0)
@@ -127,8 +129,19 @@ export async function POST(req) {
         const orders = []
 
         for (const [storeId, group] of groups) {
-          const shareOfCart = cartSubtotal > 0 ? group.subtotal / cartSubtotal : 0
-          const storeDiscount = cartDiscount * shareOfCart
+          let storeDiscount = 0
+          if (couponData) {
+            if (couponData.category) {
+              const eligibleSubtotal = group.entries
+                .filter(({ product }) => product.category === couponData.category)
+                .reduce((s, { item, product }) => s + product.price * item.quantity, 0)
+              const storeShareOfEligible = discountBase > 0 ? eligibleSubtotal / discountBase : 0
+              storeDiscount = cartDiscount * storeShareOfEligible
+            } else {
+              const shareOfCart = cartSubtotal > 0 ? group.subtotal / cartSubtotal : 0
+              storeDiscount = cartDiscount * shareOfCart
+            }
+          }
 
           const shippingCost =
             group.store.freeShippingThreshold != null && group.subtotal >= group.store.freeShippingThreshold
@@ -137,13 +150,26 @@ export async function POST(req) {
 
           const storeTotal = Math.max(0, group.subtotal - storeDiscount + shippingCost)
 
-          const orderItemsData = group.entries.map(({ item, product }) => ({
-            productId: item.productId,
-            quantity: item.quantity,
-            price: product.price,
-            name: product.name,
-            image: product.images[0] || '',
-          }))
+          const eligibleSubtotal = couponData?.category
+            ? group.entries.filter(({ product }) => product.category === couponData.category)
+                .reduce((s, { item, product }) => s + product.price * item.quantity, 0)
+            : group.subtotal
+
+          const orderItemsData = group.entries.map(({ item, product }) => {
+            const lineTotal = product.price * item.quantity
+            const isEligible = !couponData || !couponData.category || product.category === couponData.category
+            const itemDiscountShare = (couponData && isEligible && eligibleSubtotal > 0)
+              ? Math.round((storeDiscount * (lineTotal / eligibleSubtotal)) * 100) / 100
+              : 0
+            return {
+              productId: item.productId,
+              quantity: item.quantity,
+              price: product.price,
+              name: product.name,
+              image: product.images[0] || '',
+              discountShare: itemDiscountShare,
+            }
+          })
 
           for (const { item, product } of group.entries) {
             const result = await tx.product.updateMany({

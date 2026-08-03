@@ -71,12 +71,12 @@ export async function GET(req) {
     const totalRevenue = orders.reduce((s, o) => s + (o.isPaid ? o.total : 0), 0)
     const totalOrders = orders.length
     const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0
-    const conversionRate = totalOrders > 0
+    const fulfillmentRate = totalOrders > 0
       ? (orders.filter(o => o.status === 'DELIVERED').length / totalOrders * 100).toFixed(1)
       : 0
 
     return success({
-      summary: { totalRevenue, totalOrders, avgOrderValue, conversionRate },
+      summary: { totalRevenue, totalOrders, avgOrderValue, fulfillmentRate },
       orders,
       topProducts: enrichedTopProducts,
       categoryBreakdown,

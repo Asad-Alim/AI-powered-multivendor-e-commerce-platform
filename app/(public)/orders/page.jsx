@@ -13,6 +13,7 @@ export default function Orders() {
   const [orders, setOrders]   = useState([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState({})
+  const [expandedGroups, setExpandedGroups] = useState({})
 
   useEffect(() => {
     const fetchOrders = async () => {
@@ -34,6 +35,7 @@ export default function Orders() {
   }, [user])
 
   const toggleExpand = (id) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }))
+  const toggleExpandGroup = (id) => setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] }))
 
   const handleStatusChange = (orderId, newStatus) => {
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o))
@@ -73,57 +75,95 @@ export default function Orders() {
           <PageTitle heading='My Orders' text={`${orders.length} order${orders.length !== 1 ? 's' : ''} placed`} path='/' linkText='Go to home' />
 
           <div className='flex flex-col gap-5 mt-4'>
-            {orders.map(order => (
-              <div key={order.id} className='rounded-2xl border overflow-hidden' style={{ borderColor: 'var(--border-color)', backgroundColor: 'var(--bg-secondary)' }}>
-                {/* Order header */}
-                <div className='flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b' style={{ borderColor: 'var(--border-color)' }}>
-                  <div>
-                    <p className='text-xs font-mono' style={{ color: 'var(--text-muted)' }}>Order #{order.id.slice(-10).toUpperCase()}</p>
-                    <p className='text-xs mt-0.5' style={{ color: 'var(--text-muted)' }}>{new Date(order.createdAt).toDateString()}</p>
-                  </div>
-                  <div className='flex items-center gap-3'>
-                    <span className='text-sm font-semibold text-green-500'>
-                      {process.env.NEXT_PUBLIC_CURRENCY_SYMBOL || '$'}{order.total}
-                    </span>
-                    <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${
-                      order.status === 'DELIVERED' ? 'bg-green-100 text-green-700'
-                      : order.status === 'CANCELLED' || order.status === 'REFUNDED' ? 'bg-red-100 text-red-600'
-                      : order.status === 'SHIPPED' || order.status === 'OUT_FOR_DELIVERY' ? 'bg-indigo-100 text-indigo-700'
-                      : 'bg-slate-100 text-slate-600'
-                    }`}>
-                      {order.status?.replace(/_/g, ' ')}
-                    </span>
-                    <button onClick={() => toggleExpand(order.id)} className='p-1 rounded-lg transition hover:opacity-70' style={{ color: 'var(--text-muted)' }}>
-                      {expanded[order.id] ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                    </button>
-                  </div>
-                </div>
+            {groups.map(group => {
+              const isSingle = group.orders.length === 1
+              const groupTotal = group.orders.reduce((s, o) => s + o.total, 0)
+              const itemCount = group.orders.reduce((s, o) => s + o.orderItems.length, 0)
+              const groupIsExpanded = isSingle ? true : !!expandedGroups[group.groupId]
 
-                {/* Order timeline */}
-                <div className='px-5 pt-4'>
-                  <OrderTimeline order={order} />
-                </div>
+              return (
+                <div key={group.groupId}
+                  className={isSingle ? '' : 'rounded-2xl border overflow-hidden'}
+                  style={isSingle ? {} : { borderColor: 'var(--border-color)', backgroundColor: 'var(--bg-primary)' }}>
+                  {/* Outer "one purchase" header — only shown with real chrome for multi-store purchases */}
+                  {!isSingle && (
+                    <div className='flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b'
+                      style={{ borderColor: 'var(--border-color)' }}>
+                      <div>
+                        <p className='text-sm font-semibold'>Purchase · {new Date(group.createdAt).toDateString()}</p>
+                        <p className='text-xs mt-0.5' style={{ color: 'var(--text-muted)' }}>
+                          {group.orders.length} store{group.orders.length !== 1 ? 's' : ''} · {itemCount} item{itemCount !== 1 ? 's' : ''}
+                        </p>
+                      </div>
+                      <div className='flex items-center gap-3'>
+                        <span className='text-sm font-semibold text-green-500'>
+                          {process.env.NEXT_PUBLIC_CURRENCY_SYMBOL || '$'}{groupTotal}
+                        </span>
+                        <button onClick={() => toggleExpandGroup(group.groupId)} className='p-1 rounded-lg transition hover:opacity-70' style={{ color: 'var(--text-muted)' }}>
+                          {groupIsExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
-                {/* Expandable order items */}
-                {expanded[order.id] && (
-                  <div className='px-5 pb-4'>
-                    <table className='w-full text-sm mt-2' style={{ color: 'var(--text-secondary)' }}>
-                      <thead>
-                        <tr className='border-b text-xs font-medium' style={{ borderColor: 'var(--border-color)', color: 'var(--text-muted)' }}>
-                          <th className='text-left pb-2'>Product</th>
-                          <th className='text-center pb-2 max-md:hidden'>Total</th>
-                          <th className='text-left pb-2 max-md:hidden'>Delivery Address</th>
-                          <th className='text-center pb-2'></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <OrderItem order={order} onStatusChange={handleStatusChange} />
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            ))}
+                  {groupIsExpanded && (
+                    <div className={isSingle ? 'flex flex-col gap-5' : 'flex flex-col gap-4 p-4'}>
+                      {group.orders.map(order => (
+                        <div key={order.id} className='rounded-2xl border overflow-hidden' style={{ borderColor: 'var(--border-color)', backgroundColor: 'var(--bg-secondary)' }}>
+                          {/* Order header */}
+                          <div className='flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b' style={{ borderColor: 'var(--border-color)' }}>
+                            <div>
+                              <p className='text-xs font-mono' style={{ color: 'var(--text-muted)' }}>Order #{order.id.slice(-10).toUpperCase()}</p>
+                              <p className='text-xs mt-0.5' style={{ color: 'var(--text-muted)' }}>{new Date(order.createdAt).toDateString()}</p>
+                            </div>
+                            <div className='flex items-center gap-3'>
+                              <span className='text-sm font-semibold text-green-500'>
+                                {process.env.NEXT_PUBLIC_CURRENCY_SYMBOL || '$'}{order.total}
+                              </span>
+                              <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${
+                                order.status === 'DELIVERED' ? 'bg-green-100 text-green-700'
+                                : order.status === 'CANCELLED' || order.status === 'REFUNDED' ? 'bg-red-100 text-red-600'
+                                : order.status === 'SHIPPED' || order.status === 'OUT_FOR_DELIVERY' ? 'bg-indigo-100 text-indigo-700'
+                                : 'bg-slate-100 text-slate-600'
+                              }`}>
+                                {order.status?.replace(/_/g, ' ')}
+                              </span>
+                              <button onClick={() => toggleExpand(order.id)} className='p-1 rounded-lg transition hover:opacity-70' style={{ color: 'var(--text-muted)' }}>
+                                {expanded[order.id] ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Order timeline */}
+                          <div className='px-5 pt-4'>
+                            <OrderTimeline order={order} />
+                          </div>
+
+                          {/* Expandable order items */}
+                          {expanded[order.id] && (
+                            <div className='px-5 pb-4'>
+                              <table className='w-full text-sm mt-2' style={{ color: 'var(--text-secondary)' }}>
+                                <thead>
+                                  <tr className='border-b text-xs font-medium' style={{ borderColor: 'var(--border-color)', color: 'var(--text-muted)' }}>
+                                    <th className='text-left pb-2'>Product</th>
+                                    <th className='text-center pb-2 max-md:hidden'>Total</th>
+                                    <th className='text-left pb-2 max-md:hidden'>Delivery Address</th>
+                                    <th className='text-center pb-2'></th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  <OrderItem order={order} onStatusChange={handleStatusChange} />
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </div>
       ) : (

@@ -9,34 +9,50 @@ export async function POST(req, { params }) {
     if (authError) return authError
 
     const { orderId } = await params
-    const { note } = await req.json().catch(() => ({}))
+    const { note, productIds } = await req.json().catch(() => ({}))
     if (!note || note.trim().length < 5) return validationError('Please provide a reason (at least 5 characters)')
 
     const order = await prisma.order.findUnique({
       where: { id: orderId },
-      include: { store: { select: { userId: true } } },
+      include: { orderItems: true, store: { select: { userId: true } } },
     })
     if (!order) return notFound('Order not found')
     if (order.store.userId !== user.id && user.role !== 'ADMIN') return forbidden('Not authorized')
-    if (order.status !== 'RETURN_REQUESTED') return error(`Cannot reject — order status is ${order.status}`)
+
+    const requestedItems = order.orderItems.filter(oi => oi.returnStatus === 'REQUESTED')
+    if (requestedItems.length === 0) return error(`Cannot reject — no items awaiting return on this order`)
+
+    const targetItems = Array.isArray(productIds) && productIds.length > 0
+      ? requestedItems.filter(oi => productIds.includes(oi.productId))
+      : requestedItems
+    if (targetItems.length === 0) return validationError('No matching items awaiting return')
+
+    const remainingAfterReject = order.orderItems.filter(oi => !targetItems.some(t => t.productId === oi.productId))
+    const anyStillRequested = remainingAfterReject.some(oi => oi.returnStatus === 'REQUESTED')
+    const anyApproved = remainingAfterReject.some(oi => oi.returnStatus === 'APPROVED')
+    const finalOrderStatus = anyStillRequested
+      ? 'RETURN_REQUESTED'
+      : anyApproved
+        ? 'PARTIALLY_RETURNED'
+        : 'DELIVERED'
 
     await prisma.$transaction([
+      ...targetItems.map(oi => prisma.orderItem.update({
+        where: { orderId_productId: { orderId, productId: oi.productId } },
+        data: { returnStatus: 'REJECTED', returnResolvedAt: new Date(), returnDecisionNote: note.trim() },
+      })),
       prisma.order.update({
         where: { id: orderId },
-        data: {
-          status: 'DELIVERED',
-          returnResolvedAt: new Date(),
-          returnDecisionNote: note.trim(),
-        },
+        data: { status: finalOrderStatus, returnResolvedAt: new Date(), returnDecisionNote: note.trim() },
       }),
       prisma.orderStatusHistory.create({
-        data: { orderId, status: 'DELIVERED', note: `Return rejected: ${note.trim()}` },
+        data: { orderId, status: finalOrderStatus, note: `Return rejected for ${targetItems.length} item(s): ${note.trim()}` },
       }),
       prisma.notification.create({
         data: {
           userId: order.userId,
           title: 'Return Rejected',
-          message: `Your return request for order #${orderId.slice(-8).toUpperCase()} was rejected. Reason: ${note.trim()}`,
+          message: `Your return request for ${targetItems.length} item(s) in order #${orderId.slice(-8).toUpperCase()} was rejected. Reason: ${note.trim()}`,
           type: 'warning',
           link: '/orders',
         },

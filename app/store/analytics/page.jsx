@@ -25,7 +25,7 @@ export default function StoreAnalytics() {
         } else {
           // Demo fallback
           setData({
-            summary: { totalRevenue: 2840, totalOrders: 24, avgOrderValue: 118.33, conversionRate: 75.0 },
+            summary: { totalRevenue: 2840, totalOrders: 24, avgOrderValue: 118.33, fulfillmentRate: 75.0 },
             orders: dummyAdminDashboardData.allOrders,
             topProducts: [],
             categoryBreakdown: [],
@@ -51,7 +51,7 @@ export default function StoreAnalytics() {
     { title: 'Total Revenue', value: `${currency}${Number(data.summary.totalRevenue).toFixed(2)}`, icon: DollarSign, color: '#22c55e', bg: 'rgba(34,197,94,0.1)', change: '+12.5%' },
     { title: 'Total Orders', value: data.summary.totalOrders, icon: ShoppingBag, color: '#6366f1', bg: 'rgba(99,102,241,0.1)', change: '+8.2%' },
     { title: 'Avg Order Value', value: `${currency}${Number(data.summary.avgOrderValue).toFixed(2)}`, icon: TrendingUp, color: '#f59e0b', bg: 'rgba(245,158,11,0.1)', change: '+3.1%' },
-    { title: 'Delivery Rate', value: `${data.summary.conversionRate}%`, icon: Target, color: '#ec4899', bg: 'rgba(236,72,153,0.1)', change: '+1.5%' },
+    { title: 'Fulfillment Rate', value: `${data.summary.fulfillmentRate}%`, icon: Target, color: '#ec4899', bg: 'rgba(236,72,153,0.1)', change: '+1.5%' },
   ]
 
   const statusColors = {

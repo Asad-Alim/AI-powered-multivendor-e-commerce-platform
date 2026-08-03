@@ -15,8 +15,9 @@ export async function GET(req) {
       paymentMethodBreakdown,
       categoryRevenue,
     ] = await Promise.all([
-      prisma.order.findMany({
-        select: { id: true, total: true, status: true, createdAt: true, paymentMethod: true, isPaid: true, storeId: true },
+     prisma.order.findMany({
+        select: { id: true, total: true, status: true, createdAt: true, paymentMethod: true, isPaid: true, storeId: true,
+          store: { select: { commission: true } } },
         orderBy: { createdAt: 'asc' },
         take: 500,
       }),
@@ -52,8 +53,11 @@ export async function GET(req) {
     const totalRevenue = orders.reduce((s, o) => s + (o.isPaid ? o.total : 0), 0)
     const totalOrders = orders.length
     const paidOrders = orders.filter(o => o.isPaid).length
-    const platformCommission = totalRevenue * 0.10 // 10% commission
-
+    const platformCommission = orders.reduce((s, o) => {
+      if (!o.isPaid) return s
+      const rate = o.store?.commission ?? 10
+      return s + o.total * (rate / 100)
+    }, 0)
     return success({
       summary: { totalRevenue, totalOrders, paidOrders, platformCommission },
       orders,

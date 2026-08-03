@@ -24,7 +24,7 @@ export async function POST(req) {
     const passwordHash = await hashPassword(password)
 
     await prisma.$transaction([
-      prisma.user.update({ where: { id: session.userId }, data: { passwordHash } }),
+      prisma.user.update({ where: { id: session.userId }, data: { passwordHash, tokenVersion: { increment: 1 } } }),
       prisma.session.deleteMany({ where: { userId: session.userId, token: { startsWith: 'reset_' } } }),
     ])
 

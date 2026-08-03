@@ -26,8 +26,21 @@ export async function PATCH(req, { params }) {
     }
     if (body.isActive !== undefined) updateData.isActive = body.isActive
 
-    const updated = await prisma.store.update({ where: { id: storeId }, data: updateData })
+   const updated = await prisma.store.update({ where: { id: storeId }, data: updateData })
 
+    // Role flips to VENDOR only at approval time, not at application time
+    // (item 4). Bump tokenVersion so every existing session/tab for this
+    // user is invalidated — getUserFromRequest (lib/auth.js) rejects any
+    // token whose tokenVersion no longer matches the DB, forcing a
+    // re-login that picks up the new role in the JWT payload.
+    if (body.status === 'APPROVED') {
+      await prisma.user.update({
+        where: { id: store.userId },
+        data: { role: 'VENDOR', tokenVersion: { increment: 1 } },
+      })
+    }
+
+    // In-app notification
     // In-app notification
     await prisma.notification.create({
       data: {

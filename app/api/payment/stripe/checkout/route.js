@@ -43,7 +43,7 @@ export async function POST(req) {
       where:   { id: { in: productIds }, isActive: true },
       include: {
         store: {
-          select: { id: true, isActive: true, name: true, shippingFee: true, freeShippingThreshold: true, commission: true },
+          select: { id: true, isActive: true, name: true, shippingFee: true, freeShippingThreshold: true, commission: true, userId: true },
         },
       },
     })
@@ -58,6 +58,9 @@ export async function POST(req) {
       }
       if (!product.store.isActive) {
         return error(`Store for "${product.name}" is not active`)
+      }
+      if (product.store.userId === user.id) {
+        return error(`You can't purchase your own store's product: "${product.name}"`)
       }
     }
 
@@ -83,6 +86,7 @@ export async function POST(req) {
 
     let couponData = null
     let cartDiscount = 0
+    let discountBase = 0
     if (couponCode) {
       couponData = await prisma.coupon.findFirst({
         where: { code: couponCode.toUpperCase(), expiresAt: { gte: new Date() } },
@@ -99,7 +103,7 @@ export async function POST(req) {
         return error('This coupon is not valid for your plan')
       }
 
-      const discountBase = couponData.category
+      discountBase = couponData.category
         ? [...groups.values()].reduce((sum, g) =>
             sum + g.entries.filter(({ product }) => product.category === couponData.category)
                           .reduce((s, { item, product }) => s + product.price * item.quantity, 0), 0)
@@ -113,8 +117,19 @@ export async function POST(req) {
     const storeGroupPlans = []
 
     for (const [storeId, group] of groups) {
-      const shareOfCart = cartSubtotal > 0 ? group.subtotal / cartSubtotal : 0
-      const storeDiscount = cartDiscount * shareOfCart
+      let storeDiscount = 0
+      if (couponData) {
+        if (couponData.category) {
+          const eligibleSubtotal = group.entries
+            .filter(({ product }) => product.category === couponData.category)
+            .reduce((s, { item, product }) => s + product.price * item.quantity, 0)
+          const storeShareOfEligible = discountBase > 0 ? eligibleSubtotal / discountBase : 0
+          storeDiscount = cartDiscount * storeShareOfEligible
+        } else {
+          const shareOfCart = cartSubtotal > 0 ? group.subtotal / cartSubtotal : 0
+          storeDiscount = cartDiscount * shareOfCart
+        }
+      }
 
       const shippingCost =
         group.store.freeShippingThreshold != null && group.subtotal >= group.store.freeShippingThreshold
@@ -123,13 +138,26 @@ export async function POST(req) {
 
       const storeTotal = Math.max(0, group.subtotal - storeDiscount + shippingCost)
 
-      const orderMeta = group.entries.map(({ item, product }) => ({
-        productId: item.productId,
-        quantity:  item.quantity,
-        price:     product.price,
-        name:      product.name,
-        image:     typeof product.images[0] === 'string' ? product.images[0] : product.images[0]?.src || '',
-      }))
+      const eligibleSubtotal = couponData?.category
+        ? group.entries.filter(({ product }) => product.category === couponData.category)
+            .reduce((s, { item, product }) => s + product.price * item.quantity, 0)
+        : group.subtotal
+
+      const orderMeta = group.entries.map(({ item, product }) => {
+        const lineTotal = product.price * item.quantity
+        const isEligible = !couponData || !couponData.category || product.category === couponData.category
+        const itemDiscountShare = (couponData && isEligible && eligibleSubtotal > 0)
+          ? Math.round((storeDiscount * (lineTotal / eligibleSubtotal)) * 100) / 100
+          : 0
+        return {
+          productId: item.productId,
+          quantity: item.quantity,
+          price: product.price,
+          name: product.name,
+          image: typeof product.images[0] === 'string' ? product.images[0] : product.images[0]?.src || '',
+          discountShare: itemDiscountShare,
+        }
+      })
 
       for (const { item, product } of group.entries) {
         lineItems.push({

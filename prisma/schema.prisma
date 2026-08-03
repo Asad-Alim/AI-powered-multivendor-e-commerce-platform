@@ -22,7 +22,6 @@ enum Plan {
     PLUS
     PRO
 }
-
 enum OrderStatus {
     PENDING
     CONFIRMED
@@ -33,19 +32,27 @@ enum OrderStatus {
     CANCELLED
     RETURN_REQUESTED
     RETURNED
+    PARTIALLY_RETURNED
     REFUNDED
 }
+
 
 enum PaymentMethod {
     COD
     STRIPE
 }
-
 enum PaymentStatus {
     PENDING
     COMPLETED
     FAILED
     REFUNDED
+}
+
+enum ItemReturnStatus {
+    NONE
+    REQUESTED
+    APPROVED
+    REJECTED
 }
 
 enum StoreStatus {
@@ -203,6 +210,15 @@ model OrderItem {
     price     Float
     name      String    @default("")
     image     String    @default("")
+
+    discountShare       Float     @default(0)
+    returnStatus       ItemReturnStatus @default(NONE)
+    returnReason        String?
+    returnRequestedAt   DateTime?
+    returnResolvedAt    DateTime?
+    returnDecisionNote  String?
+    refundAmount        Float?
+    restocked           Boolean   @default(false)
 
     order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
     product Product @relation(fields: [productId], references: [id])

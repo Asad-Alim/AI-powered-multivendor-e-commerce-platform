@@ -17,13 +17,14 @@ const STATUS_STYLE = {
   CANCELLED:        'text-red-600 bg-red-100',
   RETURN_REQUESTED: 'text-purple-600 bg-purple-100',
   RETURNED:         'text-purple-600 bg-purple-100',
+  PARTIALLY_RETURNED: 'text-purple-600 bg-purple-100',
   REFUNDED:         'text-pink-600 bg-pink-100',
 }
 
 export default function OrderItem({ order, onStatusChange }) {
   const currency = process.env.NEXT_PUBLIC_CURRENCY_SYMBOL || '$'
   const [ratingModal, setRatingModal]       = useState(null)
-  const [returnModal, setReturnModal]       = useState(false)
+  const [returnModal, setReturnModal]       = useState(null) // { productId } | null — single-item return, matches rating UX
   const [returnReason, setReturnReason]     = useState('')
   const [returningOrder, setReturningOrder] = useState(false)
   const [cancelling, setCancelling] = useState(false)
@@ -38,16 +39,17 @@ export default function OrderItem({ order, onStatusChange }) {
       toast.error('Please provide a reason (min 10 characters)')
       return
     }
+    if (!returnModal?.productId) return
     setReturningOrder(true)
     try {
       const res  = await authFetch(`/api/orders/${order.id}/return-request`, {
         method: 'POST',
-        body: JSON.stringify({ reason: returnReason }),
+        body: JSON.stringify({ reason: returnReason, productIds: [returnModal.productId] }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.error)
       toast.success('Return request submitted!')
-      setReturnModal(false)
+      setReturnModal(null)
       setReturnReason('')
       if (onStatusChange) onStatusChange(order.id, 'RETURN_REQUESTED')
     } catch (err) {
@@ -72,6 +74,16 @@ export default function OrderItem({ order, onStatusChange }) {
     }
   }
 
+  const handleCancelClick = () => {
+    const multiItem = order.orderItems.length > 1
+    const message = multiItem
+      ? `Cancel this order? This store's order has ${order.orderItems.length} items — cancelling will cancel ALL of them, not just one.`
+      : 'Cancel this order?'
+    if (window.confirm(message)) {
+      toast.promise(submitCancel(), { loading: 'Cancelling…' })
+    }
+  }
+
   return (
     <>
       <tr className='text-sm'>
@@ -79,6 +91,7 @@ export default function OrderItem({ order, onStatusChange }) {
           <div className='flex flex-col gap-6'>
             {order.orderItems.map((item, i) => {
               const imgSrc = item.product?.images?.[0]?.src || item.product?.images?.[0] || item.image || ''
+              const returnStatus = item.returnStatus || 'NONE'
               return (
                 <div key={i} className='flex items-center gap-4'>
                   <div className='w-20 aspect-square rounded-xl flex items-center justify-center flex-shrink-0' style={{ backgroundColor: 'var(--bg-card)' }}>
@@ -94,6 +107,25 @@ export default function OrderItem({ order, onStatusChange }) {
                       ratings.find(r => r.orderId === order.id && r.productId === item.product.id)
                         ? <Rating value={ratings.find(r => r.orderId === order.id && r.productId === item.product.id).rating} />
                         : <button onClick={() => setRatingModal({ orderId: order.id, productId: item.product.id })} className='text-green-500 text-xs hover:underline mt-1'>Rate this product</button>
+                    )}
+                    {(order.status === 'DELIVERED' || order.status === 'PARTIALLY_RETURNED') && item.product?.id && returnStatus === 'NONE' && (
+                      <button onClick={() => setReturnModal({ productId: item.product.id })}
+                        className='flex items-center gap-1 text-purple-500 text-xs hover:underline mt-1'>
+                        <RotateCcw size={11} /> Request Return
+                      </button>
+                    )}
+                    {returnStatus === 'REQUESTED' && (
+                      <p className='text-xs mt-1' style={{ color: 'var(--text-muted)' }}>Return requested</p>
+                    )}
+                    {returnStatus === 'APPROVED' && (
+                      <p className='text-xs mt-1' style={{ color: 'var(--text-muted)' }}>
+                        Returned — refunded{item.returnDecisionNote ? `: ${item.returnDecisionNote}` : ''}
+                      </p>
+                    )}
+                    {returnStatus === 'REJECTED' && (
+                      <p className='text-xs mt-1' style={{ color: 'var(--text-muted)' }}>
+                        Return rejected{item.returnDecisionNote ? `: ${item.returnDecisionNote}` : ''}
+                      </p>
                     )}
                   </div>
                 </div>
@@ -127,24 +159,11 @@ export default function OrderItem({ order, onStatusChange }) {
                 Payment processing — you'll be able to cancel once it's confirmed
               </p>
             ) : (
-              <button onClick={() => toast.promise(submitCancel(), { loading: 'Cancelling…' })} disabled={cancelling}
+              <button onClick={handleCancelClick} disabled={cancelling}
                 className='flex items-center gap-1 text-xs text-red-500 hover:text-red-700 mt-1.5 transition disabled:opacity-60'>
                 Cancel Order
               </button>
             )
-          )}
-          {order.status === 'DELIVERED' && (
-            <button onClick={() => setReturnModal(true)}
-              className='flex items-center gap-1 text-xs text-purple-500 hover:text-purple-700 mt-1.5 transition'>
-              <RotateCcw size={11} /> Request Return
-            </button>
-          )}
-          {(order.status === 'RETURNED' || (order.status === 'DELIVERED' && order.returnDecisionNote)) && order.returnDecisionNote && (
-            <p className='text-xs mt-1.5' style={{ color: 'var(--text-muted)' }}>
-              {order.status === 'RETURNED'
-                ? `Return approved — refund issued${order.returnDecisionNote ? `: ${order.returnDecisionNote}` : ''}`
-                : `Return rejected: ${order.returnDecisionNote}`}
-            </p>
           )}
         </td>
       </tr>
@@ -156,11 +175,6 @@ export default function OrderItem({ order, onStatusChange }) {
             <div className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${statusClass}`}>
               {order.status?.replace(/_/g, ' ')}
             </div>
-            {order.status === 'DELIVERED' && (
-              <button onClick={() => setReturnModal(true)} className='text-xs text-purple-500 hover:underline flex items-center gap-1'>
-                <RotateCcw size={11} /> Return
-              </button>
-            )}
           </div>
         </td>
       </tr>
@@ -174,13 +188,13 @@ export default function OrderItem({ order, onStatusChange }) {
       {/* RatingModal rendered outside table via portal pattern */}
       {ratingModal && <RatingModal ratingModal={ratingModal} setRatingModal={setRatingModal} />}
 
-      {/* Return Request Modal */}
+      {/* Return Request Modal — scoped to a single productId, mirrors rating UX */}
       {returnModal && (
         <ReturnModal
           orderId={order.id}
           returnReason={returnReason}
           setReturnReason={setReturnReason}
-          onClose={() => setReturnModal(false)}
+          onClose={() => setReturnModal(null)}
           onSubmit={submitReturn}
           loading={returningOrder}
         />
@@ -202,7 +216,7 @@ function ReturnModal({ orderId, returnReason, setReturnReason, onClose, onSubmit
               Request <span className='text-purple-500'>Return</span>
             </h3>
             <p className='text-sm mb-5' style={{ color: 'var(--text-secondary)' }}>
-              Order #{orderId.slice(-8).toUpperCase()} · Tell us why you'd like to return this order.
+              Order #{orderId.slice(-8).toUpperCase()} · Tell us why you'd like to return this item.
             </p>
             <form onSubmit={onSubmit}>
               <textarea
