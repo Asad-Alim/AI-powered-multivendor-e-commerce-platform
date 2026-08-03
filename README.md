@@ -87,17 +87,18 @@ It features real payment processing via Stripe (including subscriptions), AI-pow
 - COD and Stripe payment options
 - Full order tracking with an animated visual timeline across all 10 statuses (see [Orders](#orders-lifecycle-multi-vendor-checkout--payments))
 - Self-service order cancellation (while `PENDING`/`CONFIRMED`) with automatic Stripe refund and store-ledger reversal if it was already paid
-- Return request flow: buyer requests a return on a delivered order, vendor/admin approves or rejects it
+- Return request flow: buyer requests a return on individual items within a delivered order, vendor/admin approves or rejects each item independently, with partial refunds and partial restocking
 - Star ratings and reviews — a customer can only rate a product once they have an order for it in `DELIVERED` status, and only once per (user, product, order) combination
 - Notifications system with unread badge in navbar, generated automatically by order-status changes, store approval, and payment events
 - Profile management with password change and a client-side strength meter
 - Saved delivery addresses (add, edit, delete, set default)
 - Newsletter subscription (separate `NewsletterSubscriber` table, simple email capture — no double opt-in flow)
 ### Vendor
-- Store creation with an admin approval workflow (`PENDING` → `APPROVED`/`REJECTED`/`SUSPENDED`)
+- Store creation with an admin approval workflow (`PENDING` → `APPROVED`/`REJECTED`/`SUSPENDED`) — the applicant's role only flips from `CUSTOMER` to `VENDOR` once an admin approves the store, not at the moment they submit the application
 - Add, edit, delete products with multi-image Cloudinary upload
 - Toggle stock availability per product
 - Configurable per-store shipping fee and free-shipping threshold, applied automatically at checkout
+- Toggle their own store's visibility (hide/unhide) independently of admin approval — a hidden store stops accepting new orders and new return requests, but existing orders remain fully fulfillable
 - Order management with status updates that:
   - Auto-generate a tracking number the first time an order is marked `SHIPPED`
   - Send a shipping/out-for-delivery email to the buyer
@@ -111,7 +112,7 @@ It features real payment processing via Stripe (including subscriptions), AI-pow
 - Store approval / rejection, with an automatic email + in-app notification to the vendor on approval
 - User management with role assignment
 - Coupon creation and management
-- Manual store activation toggle (independent of approval status)
+- Manual store activation toggle (independent of approval status) — vendors can also do this themselves for their own store now (see Vendor section)
 ### Platform
 - Light / Dark mode with `localStorage` persistence
 - Fully responsive — desktop, tablet, and mobile, with a dedicated full-screen mobile navbar (avatar, all nav links, unread badges)
@@ -214,7 +215,7 @@ intellimart-v3/
 | `Product` | Catalog item: price/MRP, stock, category, view/sold counters |
 | `Order` | One row **per store** per checkout (a multi-vendor cart creates several `Order` rows sharing one `orderGroupId`) |
 | `OrderStatusHistory` | Append-only audit trail of every status an order has passed through |
-| `OrderItem` | Line items within an order (composite key on `orderId` + `productId`) |
+| `OrderItem` | Line items within an order (composite key on `orderId` + `productId`); also tracks each item's exact discount share at checkout, plus per-item return status, reason, refund amount, and restock state |
 | `Transaction` | Payment record tied 1:1 to an order (method, status, Stripe IDs, refund info) |
 | `Rating` | Product review, unique per (user, product, order) |
 | `Address` | Saved delivery addresses |
@@ -224,7 +225,7 @@ intellimart-v3/
 | `Notification` | In-app notifications with read/unread state |
 | `NewsletterSubscriber` | Newsletter signup emails |
  
-Key enums: `Role` (CUSTOMER/VENDOR/ADMIN), `Plan` (FREE/PLUS/PRO), `OrderStatus` (10 values, below), `PaymentMethod` (COD/STRIPE), `PaymentStatus` (PENDING/COMPLETED/FAILED/REFUNDED), `StoreStatus` (PENDING/APPROVED/REJECTED/SUSPENDED).
+Key enums: `Role` (CUSTOMER/VENDOR/ADMIN), `Plan` (FREE/PLUS/PRO), `OrderStatus` (11 values, below), `PaymentMethod` (COD/STRIPE), `PaymentStatus` (PENDING/COMPLETED/FAILED/REFUNDED), `ItemReturnStatus` (NONE/REQUESTED/APPROVED/REJECTED), `StoreStatus` (PENDING/APPROVED/REJECTED/SUSPENDED).
  
 ---
  
@@ -249,21 +250,23 @@ Enforcement happens server-side in every route via `lib/middleware.js` — `requ
  
 - Passwords are hashed with `bcryptjs` at cost factor 12.
 - On login/register, a JWT is signed (`JWT_SECRET`, default expiry `2h`, configurable via `JWT_EXPIRES_IN`) and set as an httpOnly cookie (`auth_token`). A `Bearer` header is also accepted as a fallback for non-browser clients.
-- **There is no traditional session table backing normal logins.** Instead, every authenticated request re-checks the user's `tokenVersion` and `isBanned` flags against the database (`lib/auth.js` → `getUserFromRequest`). Bumping `tokenVersion` (e.g. on a forced logout or ban) instantly invalidates every JWT already issued to that user, without needing to track or delete individual sessions.
+- **There is no traditional session table backing normal logins.** Instead, every authenticated request re-checks the user's `tokenVersion` and `isBanned` flags against the database (`lib/auth.js` → `getUserFromRequest`). Bumping `tokenVersion` (e.g. on a forced logout, ban, store approval, or password reset) instantly invalidates every JWT already issued to that user, without needing to track or delete individual sessions.
 - The `Session` model that *does* exist in the schema is used **only** for password-reset tokens (`forgot-password` creates one prefixed `reset_...`; `reset-password` looks it up and deletes it once used; `logout` also clears any lingering ones for that user).
 - `JWT_SECRET` falls back to a hardcoded dev string outside production, but throws at import time if unset in production — the app will fail to start rather than silently sign tokens with a public fallback secret.
 ---
  
 ## Orders: Lifecycle, Multi-Vendor Checkout & Payments
  
-### Order status enum (10 values)
+### Order status enum (11 values)
  
 ```
 PENDING → CONFIRMED → PACKED → SHIPPED → OUT_FOR_DELIVERY → DELIVERED
                                                    ↓
-                                          RETURN_REQUESTED → RETURNED
+                                     RETURN_REQUESTED → RETURNED / PARTIALLY_RETURNED
 PENDING / CONFIRMED → CANCELLED → REFUNDED
 ```
+
+`PARTIALLY_RETURNED` is system-derived, not vendor-settable: it's reached automatically when some, but not all, items on an order have been approved for return. If a further item on that order is later returned, the order can cycle back through `RETURN_REQUESTED` before settling again.
  
 Every transition is appended to `OrderStatusHistory`, so the full timeline is reconstructable, not just the current status.
  
@@ -271,9 +274,9 @@ Every transition is appended to `OrderStatusHistory`, so the full timeline is re
  
 A single cart can contain products from several different stores. `POST /api/payment/stripe/checkout`:
  
-1. Validates the address and re-fetches all products server-side (never trusts client-submitted prices).
+1. Validates the address and re-fetches all products server-side (never trusts client-submitted prices); also blocks a vendor from checking out with their own store's products.
 2. Groups cart items **by store**, computing each store's subtotal.
-3. If a coupon is applied, computes the discount either against the whole cart or, for category-restricted coupons, only against the matching line items — then pro-rates that discount across stores by each store's share of the cart subtotal.
+3. If a coupon is applied, computes the discount either against the whole cart or, for category-restricted coupons, only against the matching line items — then pro-rates that discount across stores by each store's share of the *eligible* subtotal (the matching-category subtotal for category-restricted coupons, or the whole-cart subtotal otherwise), so a store with none of the discounted category doesn't absorb part of a discount it has no eligible items for. Each item's exact discount share is persisted on its `OrderItem` row at this point, so later partial refunds can be computed net-of-discount instead of approximated.
 4. Computes per-store shipping cost using that store's `shippingFee` / `freeShippingThreshold`.
 5. **Reserves stock atomically** inside a DB transaction using a conditional `updateMany` (`stockCount: { gte: quantity } → decrement`) — if another buyer already took the last unit, the whole checkout aborts with a friendly "sold out" error instead of overselling.
 6. Creates **one `Order` row per store**, all sharing a single `orderGroupId`, each with its own `Transaction` record in `PENDING` status.
@@ -365,13 +368,13 @@ All routes live under `app/api/` and return a consistent envelope: `{ success: t
 | Area | Routes |
 |---|---|
 | Auth | `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `POST /api/auth/forgot-password`, `POST /api/auth/reset-password` |
-| Products | `GET/POST /api/products`, `GET/PUT/DELETE /api/products/[productId]`, `GET /api/products/related` |
+| Products | `GET/POST /api/products` (supports `?ids=id1,id2,...` for exact-ID batch lookup, used by the AI recommendations panel), `GET/PUT/DELETE /api/products/[productId]`, `GET /api/products/related` |
 | Orders | `GET/POST /api/orders`, `GET /api/orders/[orderId]`, `POST /api/orders/[orderId]/cancel`, `PATCH /api/orders/[orderId]/status`, `POST /api/orders/[orderId]/return-request`, `POST /api/orders/[orderId]/return-request/approve`, `POST /api/orders/[orderId]/return-request/reject` |
 | Payments | `POST /api/payment/stripe/checkout`, `POST /api/payment/stripe/subscription`, `POST /api/payment/stripe/webhook` |
 | AI | `POST /api/ai/recommendations` |
 | Search | `GET /api/search/suggestions` |
 | Admin | `GET /api/admin/dashboard`, `GET /api/admin/analytics`, `GET/PATCH /api/admin/stores`, `GET/PATCH /api/admin/stores/[storeId]`, `GET/POST /api/admin/users`, `PATCH /api/admin/users/[userId]`, `GET/POST /api/admin/coupons`, `GET/PATCH/DELETE /api/admin/coupons/[code]` |
-| Vendor / Store | `POST /api/store`, `GET /api/store/me`, `GET /api/store/dashboard`, `GET /api/store/analytics`, `GET /api/store/orders`, `GET /api/store/public/[username]` |
+| Vendor / Store | `POST/PATCH /api/store` (PATCH toggles the calling vendor's own store visibility), `GET /api/store/me`, `GET /api/store/dashboard`, `GET /api/store/analytics`, `GET /api/store/orders`, `GET /api/store/public/[username]` |
 | Coupons (customer-facing) | `GET /api/coupon/public`, `GET /api/coupon/validate` |
 | Notifications | `GET /api/notifications`, `PATCH /api/notifications/[id]` |
 | Wishlist | `GET/POST/PUT /api/wishlist` |
@@ -508,4 +511,3 @@ MIT — see [LICENSE.md](LICENSE.md)
 ---
  
 Built with ❤️ by **Asad**
- 

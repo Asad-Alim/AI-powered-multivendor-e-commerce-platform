@@ -10,6 +10,25 @@ import { resolveOwnedStore } from '@/lib/store'
 export async function GET(req) {
   try {
     const { searchParams } = new URL(req.url)
+
+    // Batch lookup by exact ID list — used by AIRecommendations.jsx to fetch
+    // the specific products Gemini recommended, since those IDs can easily
+    // fall outside whatever page/sort the normal filters below would return.
+    const idsParam = searchParams.get('ids')
+    if (idsParam) {
+      const idsArray = idsParam.split(',').map(s => s.trim()).filter(Boolean)
+      if (idsArray.length === 0) return success({ products: [] })
+
+      const products = await prisma.product.findMany({
+        where: { id: { in: idsArray }, isActive: true },
+        include: {
+          store:  { select: { id: true, name: true, username: true, logo: true, shippingFee: true, freeShippingThreshold: true } },
+          rating: { select: { rating: true } },
+        },
+      })
+      return success({ products })
+    }
+
     const search    = searchParams.get('search')   || ''
     const category  = searchParams.get('category') || ''
     const storeId   = searchParams.get('storeId')  || ''
