@@ -40,7 +40,7 @@
  
 IntelliMart is a full-stack multivendor marketplace where customers shop from independent vendors, vendors manage their own stores, and admins oversee the entire platform. A single customer checkout can span multiple vendors at once — the backend splits the cart into one order per store, charges everything through a single Stripe Checkout Session, and settles each store's ledger independently once payment is confirmed.
  
-It features real payment processing via Stripe (including subscriptions), AI-powered cross-sell recommendations via the Gemini API, a 10-status order lifecycle with full history tracking, live search autocomplete, and separate dashboards for all three roles.
+It features real payment processing via Stripe (including subscriptions), AI-powered cross-sell recommendations via the Gemini API, an 11-status order lifecycle with full history tracking, live search autocomplete, and separate dashboards for all three roles.
  
 ---
  
@@ -301,6 +301,12 @@ A single cart can contain products from several different stores. `POST /api/pay
 - If a Stripe payment is still `PENDING` (webhook hasn't landed yet), cancellation is blocked until it resolves — prevents cancelling out from under an in-flight payment.
 - Restores stock.
 - If the order was already paid via Stripe, fires an actual `stripe.refunds.create(...)` call (not a stub), reverses the store's earnings ledger, and sets the order to `REFUNDED` instead of `CANCELLED`.
+### Return requests (`POST /api/orders/[orderId]/return-request` + `/approve` + `/reject`)
+
+- Buyer can request a return per item (not just per order) on a `DELIVERED` (or already `PARTIALLY_RETURNED`) order, as long as the store is still active; this flips the order to `RETURN_REQUESTED`.
+- Approval and rejection are decided **per item**, not per order — a vendor can approve some requested items on an order and reject others in the same batch.
+- On approval, everything happens synchronously in one DB transaction, with **no webhook involved**: stock is restored (`stockCount` incremented, `inStock: true`), the item's exact net-of-discount refund is computed from the discount share it was given at checkout, the store's earnings ledger is reversed, and — if the order was paid via Stripe — `stripe.refunds.create(...)` is attempted inside that same transaction. If every other item on the order is already `APPROVED`, this batch is treated as the order's final return: the once-only shipping fee is folded into the refund and the order settles as `RETURNED`; otherwise it settles as `PARTIALLY_RETURNED`.
+- The Stripe refund call is wrapped in its own try/catch that only logs on failure (see [Known Issues](#known-issues)) — it does not roll back the rest of the transaction.
 ---
  
 ## Coupons
@@ -502,6 +508,7 @@ Then add your Stripe webhook endpoint: `https://yourdomain.vercel.app/api/paymen
 - **Stale `.env.example` entries:** Clerk, Upstash, and refresh-token variables are documented but never used — see the [Environment Variables](#environment-variables) note above.
 - **`User.cart` column is dead:** the schema has a `cart Json` field on `User`, presumably intended for server-synced carts (mirroring how wishlist works), but nothing in the app currently reads or writes it — cart state is `localStorage`-only.
 - **`CONTRIBUTING.md` still refers to the project as "GoCart"**, left over from the template this project was originally based on — worth a find-and-replace pass if you plan to accept outside contributions.
+- **Return-approval refund failures are silent:** in `return-request/approve/route.js`, the `stripe.refunds.create(...)` call is wrapped in a try/catch that only does `console.error` on failure — it does not throw, so it can't roll back the surrounding transaction. If the Stripe refund errors out (bad payment intent, insufficient balance, etc.), the item is still marked `APPROVED`, stock is still restored, and the store's earnings are still decremented, even though the customer was never actually refunded. Worth making that failure abort the transaction (or at minimum flag the order for manual review) instead of swallowing it.
 ---
  
 ## License
