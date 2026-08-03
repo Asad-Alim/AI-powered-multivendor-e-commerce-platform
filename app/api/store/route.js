@@ -36,8 +36,8 @@ export async function POST(req) {
       data: { userId: user.id, name: name.trim(), username: username.trim().toLowerCase(), description: description.trim(), email, contact: contact || '', address: address || '', logo: logo || 'https://placehold.co/200', status: 'PENDING', isActive: false }
     })
 
-    // Update user role to VENDOR
-    await prisma.user.update({ where: { id: user.id }, data: { role: 'VENDOR' } })
+    // // Update user role to VENDOR
+    // await prisma.user.update({ where: { id: user.id }, data: { role: 'VENDOR' } })
 
     return success({ store, message: 'Store application submitted. Awaiting admin approval.' }, 201)
   } catch (err) { return serverError(err.message) }
