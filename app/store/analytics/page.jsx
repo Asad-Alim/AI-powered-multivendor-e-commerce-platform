@@ -33,7 +33,7 @@ export default function StoreAnalytics() {
         }
       } catch {
         setData({
-          summary: { totalRevenue: 2840, totalOrders: 24, avgOrderValue: 118.33, conversionRate: 75.0 },
+          summary: { totalRevenue: 2840, totalOrders: 24, avgOrderValue: 118.33, fulfillmentRate: 75.0 },
           orders: dummyAdminDashboardData.allOrders,
           topProducts: [],
           categoryBreakdown: [],

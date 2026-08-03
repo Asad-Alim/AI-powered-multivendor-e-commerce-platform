@@ -8,13 +8,19 @@ import toast from 'react-hot-toast'
 import Image from 'next/image'
 import { X, ChevronDown } from 'lucide-react'
 
+// Manually-settable via the per-row dropdown — vendors drive an order through
+// these. PARTIALLY_RETURNED is system-derived from item-level returns (see
+// the return-request routes) and is intentionally excluded here.
 const STATUS_OPTIONS = ['PENDING','CONFIRMED','PACKED','SHIPPED','OUT_FOR_DELIVERY','DELIVERED','CANCELLED','RETURN_REQUESTED','RETURNED']
+// Includes every status an order can actually be in, for the top filter bar.
+const FILTER_OPTIONS = [...STATUS_OPTIONS, 'PARTIALLY_RETURNED']
 const STATUS_COLORS = {
   PENDING:'text-slate-500 bg-slate-100', CONFIRMED:'text-yellow-600 bg-yellow-100',
   PACKED:'text-blue-600 bg-blue-100', SHIPPED:'text-indigo-600 bg-indigo-100',
   OUT_FOR_DELIVERY:'text-orange-600 bg-orange-100', DELIVERED:'text-green-600 bg-green-100',
   CANCELLED:'text-red-600 bg-red-100',
   RETURN_REQUESTED:'text-purple-600 bg-purple-100', RETURNED:'text-purple-600 bg-purple-100',
+  PARTIALLY_RETURNED:'text-purple-600 bg-purple-100',
 }
 
 export default function StoreOrders() {
@@ -26,20 +32,20 @@ export default function StoreOrders() {
   const [selected, setSelected] = useState(null)
   const [filter, setFilter] = useState('ALL')
 
-  useEffect(() => {
-    const fetchOrders = async () => {
-      try {
-        if (user && activeStoreId) {
-          const res = await authFetch(`/api/store/orders?storeId=${activeStoreId}`)
-          const data = await res.json()
-          if (data.success) { setOrders(data.data.orders); return }
-        }
-        setOrders(orderDummyData)
-      } catch { setOrders(orderDummyData) }
-      finally { setLoading(false) }
-    }
-    fetchOrders()
-  }, [user, activeStoreId])
+  const fetchOrders = async ({ silent } = {}) => {
+    if (!silent) setLoading(true)
+    try {
+      if (user && activeStoreId) {
+        const res = await authFetch(`/api/store/orders?storeId=${activeStoreId}`)
+        const data = await res.json()
+        if (data.success) { setOrders(data.data.orders); return data.data.orders }
+      }
+      setOrders(orderDummyData)
+    } catch { setOrders(orderDummyData) }
+    finally { if (!silent) setLoading(false) }
+  }
+
+  useEffect(() => { fetchOrders() }, [user, activeStoreId])
 
   const updateStatus = async (orderId, status) => {
     try {
@@ -55,32 +61,41 @@ export default function StoreOrders() {
     toast.success(`Status updated to ${status.replace(/_/g, ' ')}`)
   }
 
-  const approveReturn = async (orderId, note) => {
+  // Refetch the real order list after a return decision instead of guessing
+  // the resulting status locally — a partial approve/reject can leave the
+  // order at PARTIALLY_RETURNED or back at RETURN_REQUESTED, not just the
+  // fully-resolved RETURNED/DELIVERED this used to assume.
+  const syncSelectedFrom = (freshOrders, orderId) => {
+    const fresh = freshOrders?.find(o => o.id === orderId)
+    if (fresh) setSelected(fresh)
+  }
+
+  const approveReturn = async (orderId, note, productIds) => {
     try {
       const res = await authFetch(`/api/orders/${orderId}/return-request/approve`, {
         method: 'POST',
-        body: JSON.stringify({ note }),
+        body: JSON.stringify({ note, productIds }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.error)
-      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'RETURNED' } : o))
-      if (selected?.id === orderId) setSelected(s => ({ ...s, status: 'RETURNED' }))
+      const fresh = await fetchOrders({ silent: true })
+      if (selected?.id === orderId) syncSelectedFrom(fresh, orderId)
       toast.success('Return approved — refund issued')
     } catch (err) {
       toast.error(err.message || 'Failed to approve return')
     }
   }
 
-  const rejectReturn = async (orderId, note) => {
+  const rejectReturn = async (orderId, note, productIds) => {
     try {
       const res = await authFetch(`/api/orders/${orderId}/return-request/reject`, {
         method: 'POST',
-        body: JSON.stringify({ note }),
+        body: JSON.stringify({ note, productIds }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.error)
-      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'DELIVERED' } : o))
-      if (selected?.id === orderId) setSelected(s => ({ ...s, status: 'DELIVERED' }))
+      const fresh = await fetchOrders({ silent: true })
+      if (selected?.id === orderId) syncSelectedFrom(fresh, orderId)
       toast.success('Return rejected')
     } catch (err) {
       toast.error(err.message || 'Failed to reject return')
@@ -101,8 +116,8 @@ export default function StoreOrders() {
         <select value={filter} onChange={e => setFilter(e.target.value)}
           className='px-3 py-2 rounded-xl border text-sm outline-none'
           style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}>
-          <option value='ALL'>All Orders</option>
-          {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s.replace(/_/g,' ')}</option>)}
+         <option value='ALL'>All Orders</option>
+          {FILTER_OPTIONS.map(s => <option key={s} value={s}>{s.replace(/_/g,' ')}</option>)}
         </select>
       </div>
 
@@ -174,9 +189,14 @@ export default function StoreOrders() {
                   <div className='size-12 rounded-lg flex items-center justify-center' style={{ backgroundColor: 'var(--bg-card)' }}>
                     <Image src={item.product?.images?.[0]?.src || item.product?.images?.[0] || 'https://placehold.co/48'} alt='' width={40} height={40} className='object-contain h-10 w-auto' />
                   </div>
-                  <div className='flex-1 text-sm'>
+                 <div className='flex-1 text-sm'>
                     <p style={{ color: 'var(--text-primary)' }}>{item.product?.name}</p>
                     <p style={{ color: 'var(--text-muted)' }}>Qty: {item.quantity} · {currency}{item.price}</p>
+                    {item.returnStatus && item.returnStatus !== 'NONE' && (
+                      <p className='text-xs mt-0.5 text-purple-500'>
+                        Return {item.returnStatus.toLowerCase()}{item.returnReason ? `: ${item.returnReason}` : ''}
+                      </p>
+                    )}
                   </div>
                 </div>
               ))}
@@ -189,13 +209,14 @@ export default function StoreOrders() {
               <div className='flex justify-between'><span style={{ color: 'var(--text-secondary)' }}>Total</span><span className='font-bold text-base' style={{ color: 'var(--text-primary)' }}>{currency}{selected.total}</span></div>
             </div>
 
-            {selected.status === 'RETURN_REQUESTED' && (
+            {selected.orderItems?.some(oi => oi.returnStatus === 'REQUESTED') && (
               <div className='mt-4 p-4 rounded-xl border' style={{ borderColor: 'var(--border-color)' }}>
                 <p className='text-sm font-semibold mb-3' style={{ color: 'var(--text-primary)' }}>Return Requested</p>
-                <p className='text-xs mb-3' style={{ color: 'var(--text-muted)' }}>Reason: {selected.cancelReason}</p>
                 <ReturnDecisionButtons
-                  onApprove={(note) => approveReturn(selected.id, note)}
-                  onReject={(note) => rejectReturn(selected.id, note)}
+                  items={selected.orderItems.filter(oi => oi.returnStatus === 'REQUESTED')}
+                  currency={currency}
+                  onApprove={(note, productIds) => approveReturn(selected.id, note, productIds)}
+                  onReject={(note, productIds) => rejectReturn(selected.id, note, productIds)}
                 />
               </div>
             )}
@@ -206,13 +227,35 @@ export default function StoreOrders() {
   )
 }
 
-function ReturnDecisionButtons({ onApprove, onReject }) {
+function ReturnDecisionButtons({ items, currency, onApprove, onReject }) {
   const [note, setNote] = useState('')
   const [showNote, setShowNote] = useState(null) // 'approve' | 'reject' | null
+  const [selectedIds, setSelectedIds] = useState(() => items.map(i => i.productId))
+
+  const toggleItem = (productId) => {
+    setSelectedIds(prev => prev.includes(productId) ? prev.filter(id => id !== productId) : [...prev, productId])
+  }
+
+  const itemList = (
+    <div className='mb-3 flex flex-col gap-2'>
+      {items.map(item => (
+        <label key={item.productId} className='flex items-start gap-2 text-xs cursor-pointer'>
+          <input type='checkbox' className='mt-0.5 accent-purple-500'
+            checked={selectedIds.includes(item.productId)}
+            onChange={() => toggleItem(item.productId)} />
+          <span style={{ color: 'var(--text-secondary)' }}>
+            <span style={{ color: 'var(--text-primary)' }}>{item.name}</span> · Qty {item.quantity} · {currency}{item.price}
+            {item.returnReason && <span className='block' style={{ color: 'var(--text-muted)' }}>Reason: {item.returnReason}</span>}
+          </span>
+        </label>
+      ))}
+    </div>
+  )
 
   if (showNote) {
     return (
       <div>
+        {itemList}
         <textarea
           value={note}
           onChange={e => setNote(e.target.value)}
@@ -223,9 +266,10 @@ function ReturnDecisionButtons({ onApprove, onReject }) {
         />
         <div className='flex gap-2'>
           <button
-            onClick={() => (showNote === 'approve' ? onApprove(note) : onReject(note))}
-            className={`flex-1 py-2 rounded-xl text-sm font-medium text-white ${showNote === 'approve' ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600'}`}>
-            Confirm {showNote === 'approve' ? 'Approve' : 'Reject'}
+            disabled={selectedIds.length === 0}
+            onClick={() => (showNote === 'approve' ? onApprove(note, selectedIds) : onReject(note, selectedIds))}
+            className={`flex-1 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-50 ${showNote === 'approve' ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600'}`}>
+            Confirm {showNote === 'approve' ? 'Approve' : 'Reject'} ({selectedIds.length})
           </button>
           <button onClick={() => setShowNote(null)} className='px-4 py-2 rounded-xl border text-sm' style={{ borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}>
             Back
@@ -236,13 +280,16 @@ function ReturnDecisionButtons({ onApprove, onReject }) {
   }
 
   return (
-    <div className='flex gap-2'>
-      <button onClick={() => setShowNote('approve')} className='flex-1 py-2 rounded-xl bg-green-500 hover:bg-green-600 text-white text-sm font-medium transition'>
-        Approve Return
-      </button>
-      <button onClick={() => setShowNote('reject')} className='flex-1 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-medium transition'>
-        Reject Return
-      </button>
+    <div>
+      {itemList}
+      <div className='flex gap-2'>
+        <button onClick={() => setShowNote('approve')} className='flex-1 py-2 rounded-xl bg-green-500 hover:bg-green-600 text-white text-sm font-medium transition'>
+          Approve Selected
+        </button>
+        <button onClick={() => setShowNote('reject')} className='flex-1 py-2 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-medium transition'>
+          Reject Selected
+        </button>
+      </div>
     </div>
   )
 }
